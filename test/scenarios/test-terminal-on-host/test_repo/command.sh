@@ -1,3 +1,11 @@
+# pull binary files
+git lfs fetch --all
+git lfs checkout
+
+# get token
+npm run get_token
+
+# run simulation
 npm run simulate -- \
   --external-scenarios "./test/scenarios/test-terminal-on-host" \
   --parallelism 1 \

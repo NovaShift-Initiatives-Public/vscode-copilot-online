@@ -128,9 +128,9 @@ export class DefaultAgentPrompt extends PromptElement<DefaultAgentPromptProps> {
 				{tools[ToolName.CoreRunInTerminal] && <>Don't call the {ToolName.CoreRunInTerminal} tool multiple times in parallel. Instead, run one command and wait for the output before running the next command.<br /></>}
 				{tools[ToolName.UpdateUserPreferences] && <>After you have performed the user's task, if the user corrected something you did, expressed a coding preference, or communicated a fact that you need to remember, use the {ToolName.UpdateUserPreferences} tool to save their preferences.<br /></>}
 				When invoking a tool that takes a file path, always use the absolute file path. If the file has a scheme like untitled: or vscode-userdata:, then use a URI with the scheme.<br />
-				{tools[ToolName.CoreRunInTerminal] && <>NEVER try to edit a file by running terminal commands unless the user specifically asks for it.<br /></>}
+				{(tools[ToolName.CoreRunInTerminal] || tools[ToolName.TestRunTerminal]) && <>NEVER try to edit a file by running terminal commands unless the user specifically asks for it.<br /></>}
 				{!tools.hasSomeEditTool && <>You don't currently have any tools available for editing files. If the user asks you to edit a file, you can ask the user to enable editing tools or print a codeblock with the suggested changes.<br /></>}
-				{!tools[ToolName.CoreRunInTerminal] && <>You don't currently have any tools available for running terminal commands. If the user asks you to run a terminal command, you can ask the user to enable terminal tools or print a codeblock with the suggested command.<br /></>}
+				{!(tools[ToolName.CoreRunInTerminal] || tools[ToolName.TestRunTerminal]) && <>You don't currently have any tools available for running terminal commands. If the user asks you to run a terminal command, you can ask the user to enable terminal tools or print a codeblock with the suggested command.<br /></>}
 				Tools can be disabled by the user. You may see tools used previously in the conversation that are not currently available. Be careful to only use the tools that are currently available to you.
 			</Tag>
 			{this.props.codesearchMode && <CodesearchModeInstructions {...this.props} />}
@@ -513,7 +513,7 @@ export class DefaultAgentPromptV2 extends PromptElement<DefaultAgentPromptProps>
 					- NEVER try to edit a file by running terminal commands unless the user specifically asks for it.<br />
 					- NEVER print out a codeblock with a terminal command to run unless the user asked for it. Use the {ToolName.CoreRunInTerminal} tool instead<br />
 				</Tag>}
-				{!tools[ToolName.CoreRunInTerminal] && <Tag name='no_terminal_tools_guidelines'>
+				{!(tools[ToolName.CoreRunInTerminal] || tools[ToolName.TestRunTerminal]) && <Tag name='no_terminal_tools_guidelines'>
 					- You don't currently have any tools available for running terminal commands. If the user asks you to run a terminal command, request enabling terminal tools or print a codeblock with the suggested command.<br />
 				</Tag>}
 				{tools[ToolName.UpdateUserPreferences] && <Tag name='user_preferences_guidelines'>
@@ -658,12 +658,12 @@ export class AlternateGPTPrompt extends PromptElement<DefaultAgentPromptProps> {
 				{tools[ToolName.Codebase] && <>If {ToolName.Codebase} returns the full contents of the text files in the workspace, you have all the workspace context.<br /></>}
 				{tools[ToolName.FindTextInFiles] && <>You can use the {ToolName.FindTextInFiles} to get an overview of a file by searching for a string within that one file, instead of using {ToolName.ReadFile} many times.<br /></>}
 				{tools[ToolName.Codebase] && <>If you don't know exactly the string or filename pattern you're looking for, use {ToolName.Codebase} to do a semantic search across the workspace.<br /></>}
-				{tools[ToolName.CoreRunInTerminal] && <>Don't call the {ToolName.CoreRunInTerminal} tool multiple times in parallel. Instead, run one command and wait for the output before running the next command.<br /></>}
+				{(tools[ToolName.CoreRunInTerminal] || tools[ToolName.TestRunTerminal]) && <>Don't call the {tools[ToolName.CoreRunInTerminal] ? ToolName.CoreRunInTerminal : ToolName.TestRunTerminal} tool multiple times in parallel. Instead, run one command and wait for the output before running the next command.<br /></>}
 				{tools[ToolName.UpdateUserPreferences] && <>After you have performed the user's task, if the user corrected something you did, expressed a coding preference, or communicated a fact that you need to remember, use the {ToolName.UpdateUserPreferences} tool to save their preferences.<br /></>}
 				When invoking a tool that takes a file path, always use the absolute file path. If the file has a scheme like untitled: or vscode-userdata:, then use a URI with the scheme.<br />
-				{tools[ToolName.CoreRunInTerminal] && <>NEVER try to edit a file by running terminal commands unless the user specifically asks for it.<br /></>}
+				{(tools[ToolName.CoreRunInTerminal] || tools[ToolName.TestRunTerminal]) && <>NEVER try to edit a file by running terminal commands unless the user specifically asks for it.<br /></>}
 				{!tools.hasSomeEditTool && <>You don't currently have any tools available for editing files. If the user asks you to edit a file, you can ask the user to enable editing tools or print a codeblock with the suggested changes.<br /></>}
-				{!tools[ToolName.CoreRunInTerminal] && <>You don't currently have any tools available for running terminal commands. If the user asks you to run a terminal command, you can ask the user to enable terminal tools or print a codeblock with the suggested command.<br /></>}
+				{!(tools[ToolName.CoreRunInTerminal] || tools[ToolName.TestRunTerminal]) && <>You don't currently have any tools available for running terminal commands. If the user asks you to run a terminal command, you can ask the user to enable terminal tools or print a codeblock with the suggested command.<br /></>}
 				Tools can be disabled by the user. You may see tools used previously in the conversation that are not currently available. Be careful to only use the tools that are currently available to you.<br />
 				{tools[ToolName.FetchWebPage] && <>If the user provides a URL, you MUST use the {ToolName.FetchWebPage} tool to retrieve the content from the web page. After fetching, review the content returned by {ToolName.FetchWebPage}. If you find any additional URL's or links that are relevant, use the {ToolName.FetchWebPage} tool again to retrieve those links. Recursively gather all relevant infomrmation by fetching additional links until you have all of the information that you need.</>}<br />
 			</Tag>

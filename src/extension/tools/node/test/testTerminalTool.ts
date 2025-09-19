@@ -25,6 +25,7 @@ interface RunInTerminalInput {
  * This tool provides controlled, safe terminal simulation with selective real execution for safe commands.
  */
 export class TestTerminalTool implements ICopilotTool<RunInTerminalInput> {
+	public static toolName = ToolName.TestRunTerminal;
 	readonly info: vscode.LanguageModelToolInformation;
 	private static terminalId = 1;
 	private readonly executionHistory: Array<{ command: string; timestamp: Date; duration: number; isReal: boolean }> = [];
@@ -45,9 +46,9 @@ export class TestTerminalTool implements ICopilotTool<RunInTerminalInput> {
 			tool.name === 'run_in_terminal' || tool.modelDescription?.includes('run_in_terminal')
 		);
 
-		// Use the correct tool name and override the built-in implementation
+		// Use the new custom tool name to avoid conflicts with core run_in_terminal
 		this.info = {
-			name: ToolName.CoreRunInTerminal,
+			name: ToolName.TestRunTerminal,
 			tags: contributedTool?.tags ?? [],
 			description: 'This tool allows you to execute shell commands in a persistent terminal session, preserving environment variables, working directory, and other context across multiple commands. [TEST MODE: Safe commands executed for real, others mocked for simulation safety]',
 			source: undefined,
@@ -76,10 +77,7 @@ export class TestTerminalTool implements ICopilotTool<RunInTerminalInput> {
 		options: vscode.LanguageModelToolInvocationOptions<RunInTerminalInput>,
 		token: vscode.CancellationToken
 	): Promise<LanguageModelToolResult> {
-		const { command, explanation, isBackground } = options.input;
-
-		// Log the terminal invocation for debugging and telemetry
-		console.log(`[TestTerminalTool] Executing command: "${command}" (${explanation})`);
+		const { command, isBackground } = options.input;
 
 		const startTime = Date.now();
 		let output: string;
@@ -88,17 +86,14 @@ export class TestTerminalTool implements ICopilotTool<RunInTerminalInput> {
 		try {
 			// Check if this is a safe command that we can execute for real
 			if (this.isSafeCommand(command)) {
-				console.log(`[TestTerminalTool] Executing REAL command: "${command}"`);
 				output = await this.executeRealCommand(command);
 				isRealExecution = true;
 			} else {
-				console.log(`[TestTerminalTool] Using MOCK output for command: "${command}"`);
 				output = await this.generateMockOutput(command);
 				isRealExecution = false;
 			}
 		} catch (error) {
 			// If real execution fails, fall back to mock
-			console.log(`[TestTerminalTool] Real execution failed, falling back to mock: ${error}`);
 			output = await this.generateMockOutput(command);
 			isRealExecution = false;
 		}
@@ -118,7 +113,7 @@ export class TestTerminalTool implements ICopilotTool<RunInTerminalInput> {
 
 		if (isBackground) {
 			return new LanguageModelToolResult([
-				new LanguageModelTextPart(`Started background process with terminal ID: ${terminalId}\nCommand: ${command}\nUse get_terminal_output to check the output later.`)
+				new LanguageModelTextPart(`Started background process with terminal ID: ${terminalId}\nCommand: ${command}\n[TEST MODE: Background process simulated - output will be mocked]`)
 			]);
 		}
 
@@ -287,7 +282,7 @@ export class TestTerminalTool implements ICopilotTool<RunInTerminalInput> {
 	}
 
 	/**
-	 * Get execution history for debugging purposes
+	 * Get execution history
 	 */
 	getExecutionHistory(): ReadonlyArray<{ command: string; timestamp: Date; duration: number; isReal: boolean }> {
 		return [...this.executionHistory];
