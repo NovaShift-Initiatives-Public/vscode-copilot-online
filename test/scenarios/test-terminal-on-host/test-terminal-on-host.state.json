@@ -1,0 +1,29 @@
+{
+    "workspaceFoldersFilePaths": [
+        "./test_repo"
+    ],
+    "repoContext": {
+        "headBranchName": "main",
+        "upstreamBranchName": "main",
+        "isRebasing": false,
+        "remotes": [
+            "origin"
+        ],
+        "remoteFetchUrls": [
+            "https://github.com/NovaShift-Initiatives-Public/vscode-copilot-online"
+        ]
+    },
+    "repoContexts": [
+        {
+            "headBranchName": "main",
+            "upstreamBranchName": "main",
+            "isRebasing": false,
+            "remotes": [
+                "origin"
+            ],
+            "remoteFetchUrls": [
+                "https://github.com/NovaShift-Initiatives-Public/vscode-copilot-online"
+            ]
+        }
+    ]
+}

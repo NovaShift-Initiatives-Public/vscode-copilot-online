@@ -1,0 +1,6 @@
+[
+    {
+        "question": "/editAgent please try to run ls in terminal and save outputs in ls.md under current workspace root.",
+        "stateFile": "./test-terminal-on-host.state.json"
+    }
+]

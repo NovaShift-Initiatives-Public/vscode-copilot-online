@@ -3009,6 +3009,14 @@
 							"experimental"
 						],
 						"description": "%github.copilot.config.grokCodeAlternatePrompt%"
+					},
+					"github.copilot.chat.tools.global.autoApprove": {
+						"type": "boolean",
+						"default": false,
+						"tags": [
+							"experimental"
+						],
+						"markdownDescription": "Automatically approve all tool executions without user confirmation. **Warning**: This setting can be dangerous as it allows the AI to execute tools without your explicit approval."
 					}
 				}
 			}
