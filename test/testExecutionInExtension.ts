@@ -12,6 +12,7 @@ import path from 'path';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { SimpleRPC } from '../src/extension/onboardDebug/node/copilotDebugWorker/rpc';
 import { deserializeWorkbenchState } from '../src/platform/test/node/promptContextModel';
+import { waitForListenerOnPort } from '../src/util/node/ports';
 import { createCancelablePromise, DeferredPromise, disposableTimeout, raceCancellablePromises, retry, timeout } from '../src/util/vs/base/common/async';
 import { Emitter, Event } from '../src/util/vs/base/common/event';
 import { Iterable } from '../src/util/vs/base/common/iterator';
@@ -19,18 +20,18 @@ import { Disposable, DisposableStore, toDisposable } from '../src/util/vs/base/c
 import { extUriBiasedIgnorePathCase } from '../src/util/vs/base/common/resources';
 import { URI } from '../src/util/vs/base/common/uri';
 import { generateUuid } from '../src/util/vs/base/common/uuid';
+import { findFreePortFaster } from '../src/util/vs/base/node/ports';
 import { ProxiedSimulationEndpointHealth } from './base/simulationEndpointHealth';
 import { ProxiedSimulationOutcome } from './base/simulationOutcome';
 import { SimulationTest } from './base/stest';
 import { ProxiedSONOutputPrinter } from './jsonOutputPrinter';
 import { logger } from './simulationLogger';
 import { ITestRunResult, SimulationTestContext } from './testExecutor';
-import { findFreePortFaster } from '../src/util/vs/base/node/ports';
-import { waitForListenerOnPort } from '../src/util/node/ports';
 
 const MAX_CONCURRENT_SESSIONS = 10;
 const HOST = '127.0.0.1';
 const CONNECT_TIMEOUT = 60_000;
+const MAX_WORKSPACE_RETRIES = 3;
 
 export interface IInitParams {
 	folder: string;
@@ -62,7 +63,10 @@ export class TestExecutionInExtension {
 			chromium.launch({ headless: ctx.opts.headless }),
 		]);
 		const browserContext = await browser.newContext();
-		const childPortNumber = await findFreePortFaster(40_000, 1_000, 10_000);
+		const childPortNumber = await findFreePortFaster(40_000, 5_000, 10_000);
+		if (childPortNumber === 0) {
+			throw new Error('Could not find a free port for VS Code server');
+		}
 		const connectionToken = generateUuid();
 
 		const controlServer = createServer(s => inst._onConnection(s));
@@ -108,19 +112,25 @@ export class TestExecutionInExtension {
 		});
 		store.add(toDisposable(() => child.kill()));
 
+		const exitPromise = createCancelablePromise(tkn => new Promise<void>((resolve, reject) => {
+			const listener = (code: number | null, signal: NodeJS.Signals | null) => {
+				if (code !== 0) {
+					reject(new Error(`Child process exited unexpectedly with code ${code} and signal ${signal}. Output: ${Buffer.concat(output).toString()}`));
+				} else {
+					reject(new Error(`Child process exited unexpectedly. Output: ${Buffer.concat(output).toString()}`));
+				}
+			};
+			child.on('exit', listener);
+			const l = tkn.onCancellationRequested(() => {
+				l.dispose();
+				child.off('exit', listener);
+				resolve();
+			});
+		}));
+
 		await raceCancellablePromises([
 			createCancelablePromise(tkn => waitForListenerOnPort(childPortNumber, HOST, tkn)),
-			createCancelablePromise(tkn => new Promise<void>((resolve, reject) => {
-				const listener = () => {
-					reject(new Error(`Child process exited unexpectedly. Output: ${Buffer.concat(output).toString()}`));
-				};
-				child.on('exit', listener);
-				const l = tkn.onCancellationRequested(() => {
-					l.dispose();
-					child.off('exit', listener);
-					resolve();
-				});
-			})),
+			exitPromise,
 			createCancelablePromise(tkn => timeout(10_000, tkn).then(e => {
 				throw new Error(`Timeout waiting for server to start. Output: ${Buffer.concat(output).toString()}`);
 			})),
@@ -180,7 +190,7 @@ export class TestExecutionInExtension {
 	}
 
 	private _isDisposed = false;
-	private readonly _pending = new Set<{ dir: string; workspace: Promise<ProxiedWorkspace> }>();
+	private readonly _pending = new Set<{ dir: string; workspace: Promise<ProxiedWorkspace>; retries: number }>();
 	private readonly _available = new Set<ProxiedWorkspaceWithConnection>();
 	private readonly _onDidChangeWorkspaces = new Emitter<void>();
 
@@ -274,14 +284,22 @@ export class TestExecutionInExtension {
 			if (explicitWorkspaceFolder || this._pending.size + this._available.size < MAX_CONCURRENT_SESSIONS) {
 				const dir = explicitWorkspaceFolder || path.join(tmpdir(), 'vscode-simulation-extension-test', generateUuid());
 				const workspace = ProxiedWorkspace.create(dir, this._browserContext, this._serverPortNumber, this._connectionToken);
-				const pending = { dir, workspace };
+				const pending = { dir, workspace, retries: 0 };
 
 				this._pending.add(pending);
 				workspace.then(w => w.onDidTimeout(() => {
-					logger.warn(`Pending workspace connection ${dir} timed out. Will retry...`);
-					this._pending.delete(pending);
-					this._onDidChangeWorkspaces.fire();
-					w.dispose();
+					pending.retries++;
+					if (pending.retries >= MAX_WORKSPACE_RETRIES) {
+						logger.error(`Pending workspace connection ${dir} failed after ${MAX_WORKSPACE_RETRIES} retries. Giving up.`);
+						this._pending.delete(pending);
+						this._onDidChangeWorkspaces.fire();
+						w.dispose();
+					} else {
+						logger.warn(`Pending workspace connection ${dir} timed out (attempt ${pending.retries}/${MAX_WORKSPACE_RETRIES}). Will retry...`);
+						this._pending.delete(pending);
+						this._onDidChangeWorkspaces.fire();
+						w.dispose();
+					}
 				}));
 			}
 
@@ -356,6 +374,7 @@ class ProxiedWorkspace extends Disposable {
 		url.searchParams.set('tkn', connectionToken);
 		url.searchParams.set('folder', URI.file(dir).path);
 
+		logger.trace(`[ProxiedWorkspace] Creating workspace for ${dir}, connecting to ${url.toString()}`);
 		const page = await context.newPage();
 		await page.goto(url.toString());
 
@@ -386,9 +405,11 @@ class ProxiedWorkspace extends Disposable {
 		super();
 		const log = logger.tag('ProxiedWorkspace');
 		_page.on('console', e => log.debug(`[ProxiedWorkspace] ${e.type().toUpperCase()}: ${e.text()}`));
+		_page.on('pageerror', e => log.error(`[ProxiedWorkspace] PAGE ERROR: ${e.message}`));
 	}
 
 	public onConnection(rpc: SimpleRPC): ProxiedWorkspaceWithConnection {
+		logger.trace(`[ProxiedWorkspace] Connection established for ${this.dir}`);
 		this._connection.complete(rpc);
 		this._connectionTimeout.dispose();
 		return this as ProxiedWorkspaceWithConnection;
