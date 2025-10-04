@@ -192,6 +192,7 @@ export class TestExecutionInExtension {
 	private _isDisposed = false;
 	private readonly _pending = new Set<{ dir: string; workspace: Promise<ProxiedWorkspace>; retries: number }>();
 	private readonly _available = new Set<ProxiedWorkspaceWithConnection>();
+	private readonly _failedDirs = new Set<string>(); // Track directories that have exhausted retries
 	private readonly _onDidChangeWorkspaces = new Emitter<void>();
 
 	constructor(
@@ -281,33 +282,74 @@ export class TestExecutionInExtension {
 				return available;
 			}
 
-			if (explicitWorkspaceFolder || this._pending.size + this._available.size < MAX_CONCURRENT_SESSIONS) {
-				const dir = explicitWorkspaceFolder || path.join(tmpdir(), 'vscode-simulation-extension-test', generateUuid());
-				const workspace = ProxiedWorkspace.create(dir, this._browserContext, this._serverPortNumber, this._connectionToken);
-				const pending = { dir, workspace, retries: 0 };
+			// Check if this directory has already failed all retries
+			if (explicitWorkspaceFolder && this._failedDirs.has(explicitWorkspaceFolder)) {
+				throw new Error(`Workspace directory ${explicitWorkspaceFolder} has already exhausted all connection attempts`);
+			}
 
+			// Check if we already have a pending workspace for this directory
+			const existingPending = explicitWorkspaceFolder ?
+				[...this._pending].find(p => p.dir === explicitWorkspaceFolder) :
+				undefined;
+
+			if (!existingPending && (explicitWorkspaceFolder || this._pending.size + this._available.size < MAX_CONCURRENT_SESSIONS)) {
+				const dir = explicitWorkspaceFolder || path.join(tmpdir(), 'vscode-simulation-extension-test', generateUuid());
+				const pending = { dir, workspace: Promise.resolve(null as any), retries: 0 };
 				this._pending.add(pending);
-				workspace.then(w => w.onDidTimeout(() => {
-					pending.retries++;
-					if (pending.retries >= MAX_WORKSPACE_RETRIES) {
-						logger.error(`Pending workspace connection ${dir} failed after ${MAX_WORKSPACE_RETRIES} retries. Giving up.`);
+
+				const createWorkspace = async () => {
+					try {
+						while (pending.retries < MAX_WORKSPACE_RETRIES) {
+							const workspace = await ProxiedWorkspace.create(dir, this._browserContext, this._serverPortNumber, this._connectionToken);
+
+							let timedOut = false;
+							const timeoutPromise = new Promise<void>((resolve) => {
+								workspace.onDidTimeout(() => {
+									timedOut = true;
+									resolve();
+								});
+							});
+
+							// Wait for either connection or timeout
+							await Promise.race([
+								workspace.connection,
+								timeoutPromise
+							]);
+
+							// If we didn't timeout, we got a connection
+							if (!timedOut) {
+								return workspace;
+							}
+
+							// Otherwise, timed out - retry
+							pending.retries++;
+							if (pending.retries >= MAX_WORKSPACE_RETRIES) {
+								logger.error(`Pending workspace connection ${dir} failed after ${MAX_WORKSPACE_RETRIES} retries. Giving up.`);
+								this._pending.delete(pending);
+								if (explicitWorkspaceFolder) {
+									this._failedDirs.add(dir);
+								}
+								await workspace.dispose();
+								throw new Error(`Failed to establish workspace connection after ${MAX_WORKSPACE_RETRIES} attempts`);
+							}
+
+							logger.warn(`Pending workspace connection ${dir} timed out (attempt ${pending.retries}/${MAX_WORKSPACE_RETRIES}). Will retry...`);
+							await workspace.dispose();
+						}
+						throw new Error(`Failed to establish workspace connection after ${MAX_WORKSPACE_RETRIES} attempts`);
+					} finally {
 						this._pending.delete(pending);
-						this._onDidChangeWorkspaces.fire();
-						w.dispose();
-					} else {
-						logger.warn(`Pending workspace connection ${dir} timed out (attempt ${pending.retries}/${MAX_WORKSPACE_RETRIES}). Will retry...`);
-						this._pending.delete(pending);
-						this._onDidChangeWorkspaces.fire();
-						w.dispose();
 					}
-				}));
+				};
+
+				pending.workspace = createWorkspace().finally(() => {
+					this._onDidChangeWorkspaces.fire();
+				});
 			}
 
 			await Event.toPromise(this._onDidChangeWorkspaces.event);
 		}
-	}
-
-	private _onConnection(socket: Socket) {
+	} private _onConnection(socket: Socket) {
 		const rpc = new SimpleRPC(socket);
 
 		rpc.registerMethod('deviceCodeCallback', ({ url }) => {
@@ -345,6 +387,7 @@ export class TestExecutionInExtension {
 		await Promise.all([...this._available].map(w => w.dispose()));
 		this._pending.clear();
 		this._available.clear();
+		this._failedDirs.clear();
 
 		await this._browserContext.close();
 		await this._browser.close();
