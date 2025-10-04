@@ -300,14 +300,14 @@ export class TestExecutionInExtension {
 				const createWorkspaceWithRetry = async (): Promise<ProxiedWorkspace> => {
 					while (pending.retries < MAX_WORKSPACE_RETRIES) {
 						let workspace: ProxiedWorkspace | undefined;
+						let timeoutDisposable: { dispose: () => void } | undefined;
 						try {
 							workspace = await ProxiedWorkspace.create(dir, this._browserContext, this._serverPortNumber, this._connectionToken);
 
 							// Race between connection and timeout
-							let timedOut = false;
+							// Use a disposable to ensure the event listener is cleaned up
 							const timeoutPromise = new Promise<never>((_, reject) => {
-								workspace!.onDidTimeout(() => {
-									timedOut = true;
+								timeoutDisposable = workspace!.onDidTimeout(() => {
 									reject(new Error('Connection timeout'));
 								});
 							});
@@ -319,15 +319,25 @@ export class TestExecutionInExtension {
 							]);
 
 							// If we reach here, connection succeeded
+							// Clean up the timeout listener
+							if (timeoutDisposable) {
+								timeoutDisposable.dispose();
+							}
 							return workspace;
 						} catch (error) {
 							// Connection failed or timed out
+							// Clean up the timeout listener first
+							if (timeoutDisposable) {
+								timeoutDisposable.dispose();
+							}
+
 							pending.retries++;
 							logger.warn(`Workspace connection ${dir} failed (attempt ${pending.retries}/${MAX_WORKSPACE_RETRIES}): ${error instanceof Error ? error.message : error}`);
 
-							// Clean up the failed workspace
+							// IMPORTANT: Clean up the failed workspace immediately to free memory
 							if (workspace) {
 								await workspace.dispose().catch(() => { });
+								workspace = undefined; // Clear reference to help GC
 							}
 
 							if (pending.retries >= MAX_WORKSPACE_RETRIES) {
