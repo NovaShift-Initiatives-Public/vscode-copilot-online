@@ -297,16 +297,18 @@ export class TestExecutionInExtension {
 				const pending = { dir, workspace: Promise.resolve(null as any), retries: 0 };
 				this._pending.add(pending);
 
-				const createWorkspace = async () => {
-					try {
-						while (pending.retries < MAX_WORKSPACE_RETRIES) {
-							const workspace = await ProxiedWorkspace.create(dir, this._browserContext, this._serverPortNumber, this._connectionToken);
+				const createWorkspaceWithRetry = async (): Promise<ProxiedWorkspace> => {
+					while (pending.retries < MAX_WORKSPACE_RETRIES) {
+						let workspace: ProxiedWorkspace | undefined;
+						try {
+							workspace = await ProxiedWorkspace.create(dir, this._browserContext, this._serverPortNumber, this._connectionToken);
 
+							// Race between connection and timeout
 							let timedOut = false;
-							const timeoutPromise = new Promise<void>((resolve) => {
-								workspace.onDidTimeout(() => {
+							const timeoutPromise = new Promise<never>((_, reject) => {
+								workspace!.onDidTimeout(() => {
 									timedOut = true;
-									resolve();
+									reject(new Error('Connection timeout'));
 								});
 							});
 
@@ -316,35 +318,38 @@ export class TestExecutionInExtension {
 								timeoutPromise
 							]);
 
-							// If we didn't timeout, we got a connection
-							if (!timedOut) {
-								return workspace;
+							// If we reach here, connection succeeded
+							return workspace;
+						} catch (error) {
+							// Connection failed or timed out
+							pending.retries++;
+							logger.warn(`Workspace connection ${dir} failed (attempt ${pending.retries}/${MAX_WORKSPACE_RETRIES}): ${error instanceof Error ? error.message : error}`);
+
+							// Clean up the failed workspace
+							if (workspace) {
+								await workspace.dispose().catch(() => { });
 							}
 
-							// Otherwise, timed out - retry
-							pending.retries++;
 							if (pending.retries >= MAX_WORKSPACE_RETRIES) {
-								logger.error(`Pending workspace connection ${dir} failed after ${MAX_WORKSPACE_RETRIES} retries. Giving up.`);
+								logger.error(`Workspace ${dir} failed after ${MAX_WORKSPACE_RETRIES} retries. Giving up.`);
 								this._pending.delete(pending);
 								if (explicitWorkspaceFolder) {
 									this._failedDirs.add(dir);
 								}
-								await workspace.dispose();
-								throw new Error(`Failed to establish workspace connection after ${MAX_WORKSPACE_RETRIES} attempts`);
+								throw new Error(`Failed to establish workspace connection after ${MAX_WORKSPACE_RETRIES} attempts: ${error instanceof Error ? error.message : error}`);
 							}
 
-							logger.warn(`Pending workspace connection ${dir} timed out (attempt ${pending.retries}/${MAX_WORKSPACE_RETRIES}). Will retry...`);
-							await workspace.dispose();
+							// Fire event to wake up waiters before retry
+							this._onDidChangeWorkspaces.fire();
+
+							// Continue to next retry iteration
 						}
-						throw new Error(`Failed to establish workspace connection after ${MAX_WORKSPACE_RETRIES} attempts`);
-					} finally {
-						this._pending.delete(pending);
 					}
+
+					throw new Error(`Failed to establish workspace connection after ${MAX_WORKSPACE_RETRIES} attempts`);
 				};
 
-				pending.workspace = createWorkspace().finally(() => {
-					this._onDidChangeWorkspaces.fire();
-				});
+				pending.workspace = createWorkspaceWithRetry();
 			}
 
 			await Event.toPromise(this._onDidChangeWorkspaces.event);
