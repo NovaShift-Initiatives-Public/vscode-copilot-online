@@ -14,6 +14,7 @@ import { IntentDetector } from '../../src/extension/prompt/node/intentDetector';
 import { IIntent } from '../../src/extension/prompt/node/intents';
 import { WorkingCopyOriginalDocument } from '../../src/extension/prompts/node/inline/workingCopies';
 import { IToolsService } from '../../src/extension/tools/common/toolsService';
+import { TestTerminalTool } from '../../src/extension/tools/node/test/testTerminalTool';
 import { TestEditFileTool } from '../../src/extension/tools/node/test/testTools';
 import { TestToolsService } from '../../src/extension/tools/node/test/testToolsService';
 import { editingSessionAgentEditorName, editorAgentName, getChatParticipantIdFromName } from '../../src/platform/chat/common/chatAgents';
@@ -696,10 +697,18 @@ export async function simulateEditingScenario(
 function setupTools(stream: vscode.ChatResponseStream, request: ChatRequest, accessor: ITestingServicesAccessor) {
 	const toolsService = accessor.get(IToolsService) as TestToolsService | SimulationExtHostToolsService;
 	const instaService = accessor.get(IInstantiationService);
+
+	// Create and register the test edit file tool
 	const editTool = instaService.createInstance(TestEditFileTool, stream);
 	toolsService.addTestToolOverride(
 		editTool.info,
 		editTool);
+
+	// Create and register the test terminal tool using dependency injection
+	const testTerminalTool = instaService.createInstance(TestTerminalTool);
+	toolsService.addTestToolOverride(
+		testTerminalTool.info,
+		testTerminalTool);
 }
 
 function computeMoreMinimalEdit(document: vscode.TextDocument, edit: vscode.TextEdit): vscode.TextEdit {

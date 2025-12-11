@@ -792,6 +792,7 @@ export namespace ConfigKey {
 	export const EnableAlternateGptPrompt = defineExpSetting<boolean>('chat.alternateGptPrompt.enabled', false);
 	export const Gpt5AlternatePrompt = defineExpSetting<string>('chat.gpt5AlternatePrompt', 'default');
 	export const GrokCodeAlternatePrompt = defineExpSetting<string>('chat.grokCodeAlternatePrompt', 'default');
+	export const GlobalToolAutoApprove = defineExpSetting<boolean>('chat.tools.global.autoApprove', false);
 }
 
 export function getAllConfigKeys(): string[] {
